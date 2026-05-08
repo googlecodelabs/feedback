@@ -1,0 +1,66 @@
+name: Issue Triage Workflow
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  issues: write
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Triage Issue
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const issue = context.payload.issue;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            // Rule 1: Close if no description
+            if (!issue.body || issue.body.trim() === '') {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: issue.number,
+                body: 'Closing this issue because it has no description. Please open a new issue with details about the problem.'
+              });
+              await github.rest.issues.update({
+                owner,
+                repo,
+                issue_number: issue.number,
+                state: 'closed'
+              });
+              return;
+            }
+
+            // Rule 2: Assign based on Codelab ID
+            // Assume Codelab ID is in brackets or a specific format in the title, e.g., "[codelab-id] Title"
+            const titleMatch = issue.title.match(/\[([^\]]+)\]/);
+            if (titleMatch) {
+              const codelabId = titleMatch[1];
+              
+              // Search for other issues with the same Codelab ID
+              const searchResponse = await github.rest.search.issuesAndPullRequests({
+                q: `repo:${owner}/${repo} is:issue "${codelabId}"`
+              });
+
+              const issues = searchResponse.data.items;
+              
+              // Find an issue with an assignee
+              const assignedIssue = issues.find(i => i.number !== issue.number && i.assignees && i.assignees.length > 0);
+              
+              if (assignedIssue) {
+                const assignee = assignedIssue.assignees[0].login;
+                await github.rest.issues.addAssignees({
+                  owner,
+                  repo,
+                  issue_number: issue.number,
+                  assignees: [assignee]
+                });
+                console.log(`Assigned to ${assignee} based on match with issue #${assignedIssue.number}`);
+              }
+            }
